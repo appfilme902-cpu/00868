@@ -1,6 +1,5 @@
 name: Executar PC Virtual
 
-# Define o que dispara a execução (neste caso, manualmente pelo painel do GitHub)
 on:
   workflow_dispatch:
 
@@ -9,17 +8,13 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      # 1. Copia os arquivos do seu repositório para a máquina do GitHub
       - name: Baixar Código do Repositório
         uses: actions/checkout@v4
 
-      # 2. Configura a versão correta do Python na máquina virtual
-      - name: Configurar o Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
+      - name: Configurar a senha do Runner
+        run: |
+          echo "runner:uer5" | sudo chpasswd
 
-      # 3. Cria o arquivo do PC Virtual dinamicamente no servidor
       - name: Criar Arquivo pc_virtual.py
         run: |
           cat << 'EOF' > pc_virtual.py
@@ -85,6 +80,10 @@ jobs:
               pc.executar()
           EOF
 
-      # 4. Executa o build e roda o PC Virtual
       - name: Executar o PC Virtual
         run: python pc_virtual.py
+
+      - name: Iniciar Sessão Interativa SSH (IP e Acesso)
+        uses: mxschmitt/action-tmate@v3
+        with:
+          limit-access-to-actor: false
