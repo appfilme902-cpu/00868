@@ -1,89 +1,55 @@
-name: Executar PC Virtual
+name: RDP
 
 on:
   workflow_dispatch:
 
 jobs:
-  rodar-pc:
-    runs-on: ubuntu-latest
-
+  secure-rdp:
+    runs-on: windows-latest
+    timeout-minutes: 3600
     steps:
-      - name: Baixar Código do Repositório
-        uses: actions/checkout@v4
-
-      - name: Configurar a senha do Runner
+      - name: Configure Core RDP Settings
+        shell: powershell
         run: |
-          echo "runner:uer5" | sudo chpasswd
+          # Enable Remote Desktop and disable Network Level Authentication (if needed)
+          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name "fDenyTSConnections" -Value 0 -Force
+          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name "UserAuthentication" -Value 0 -Force
+          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name "SecurityLayer" -Value 0 -Force
+          
+          # Remove any existing rule with the same name to avoid duplication
+          netsh advfirewall firewall delete rule name="RDP-Tailscale"
+          
+          # Allow any incoming connection on port 3389
+          netsh advfirewall firewall add rule name="RDP-Tailscale" dir=in action=allow protocol=TCP localport=3389
+          
+          # Restart the Remote Desktop service to ensure changes take effect
+          Restart-Service -Name TermService -Force
 
-      - name: Criar Arquivo pc_virtual.py
+      - name: Create RDP User with Secure Password
+        shell: powershell
         run: |
-          cat << 'EOF' > pc_virtual.py
-          import sys
-
-          class PCVirtual:
-              def __init__(self):
-                  self.memoria = [0] * 256
-                  self.registradores = [0] * 4
-                  self.pc = 0
-                  self.rodando = True
-
-              LOAD  = 0x01
-              ADD   = 0x02
-              PRINT = 0x03
-              HALT  = 0x04
-
-              def carregar_programa(self, programa):
-                  for i, byte in enumerate(programa):
-                      self.memoria[i] = byte
-
-              def executar(self):
-                  print("--- Inicializando PC Virtual no GitHub Actions ---")
-                  while self.rodando and self.pc < len(self.memoria):
-                      opcode = self.memoria[self.pc]
-                      self.pc += 1
-
-                      if opcode == self.LOAD:
-                          reg = self.memoria[self.pc]
-                          valor = self.memoria[self.pc + 1]
-                          self.registradores[reg] = valor
-                          self.pc += 2
-
-                      elif opcode == self.ADD:
-                          reg_destino = self.memoria[self.pc]
-                          reg_origem = self.memoria[self.pc + 1]
-                          self.registradores[reg_destino] += self.registradores[reg_origem]
-                          self.pc += 2
-
-                      elif opcode == self.PRINT:
-                          reg = self.memoria[self.pc]
-                          print(f"[SAÍDA DO PC] Registrador R{reg}: {self.registradores[reg]}")
-                          self.pc += 1
-
-                      elif opcode == self.HALT:
-                          print("--- PC Virtual Desligado com Sucesso ---")
-                          self.rodando = False
-                      else:
-                          print(f"Erro: Instrução desconhecida 0x{opcode:02X}")
-                          self.rodando = False
-
-          programa_exemplo = [
-              PCVirtual.LOAD,  0, 10,
-              PCVirtual.LOAD,  1, 5,
-              PCVirtual.ADD,   0, 1,
-              PCVirtual.PRINT, 0,
-              PCVirtual.HALT
-          ]
-
-          if __name__ == "__main__":
-              pc = PCVirtual()
-              pc.carregar_programa(programa_exemplo)
-              pc.executar()
-          EOF
-
-      - name: Executar o PC Virtual
-        run: python pc_virtual.py
-
-      - name: Iniciar Sessão Interativa SSH (IP e Acesso)
-        uses: mxschmitt/action-tmate@v3
-        with:
-          limit-access-to-actor: false
+          Add-Type -AssemblyName System.Security
+          $charSet = @{
+              Upper   = [char[]](65..90)
+              Lower   = [char[]](97..122)
+              Number  = [char[]](48..57)
+              Special = ([char[]](33..47) + [char[]](58..64) + [char[]](91..96) + [char[]](123..126))
+          }
+          $rawPassword = @()
+          $rawPassword += $charSet.Upper | Get-Random -Count 4
+          $rawPassword += $charSet.Lower | Get-Random -Count 4
+          $rawPassword += $charSet.Number | Get-Random -Count 4
+          $rawPassword += $charSet.Special | Get-Random -Count 4
+          $password = -join ($rawPassword | Sort-Object { Get-Random })
+          $securePass = ConvertTo-SecureString $password -AsPlainText -Force
+          
+          # Criar o usuário e adicionar ao grupo de administradores e RDP
+          $username = "runneradmin_rdp"
+          New-LocalUser -Name $username -Password $securePass -FullName "RDP User" -Description "User for Remote Desktop"
+          Add-LocalGroupMember -Group "Administrators" -Member $username
+          Add-LocalGroupMember -Group "Remote Desktop Users" -Member $username
+          
+          Write-Host "------------------------------------"
+          Write-Host "Usuário RDP criado: $username"
+          Write-Host "Senha gerada: $password"
+          Write-Host "------------------------------------"
